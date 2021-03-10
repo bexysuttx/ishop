@@ -1,6 +1,7 @@
 package ishop;
 
 public final class Constants {
+	
 
 	public final static String CURRENT_SHOPPING_CART = "CURRENT_SHOPPING_CART";
 

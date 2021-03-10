@@ -16,6 +16,7 @@ import ishop.utils.WebUtils;
 @WebFilter(filterName = "AccessPageFilter")
 public class AccessPageFilter extends AbstractFilter {
 
+	
 	@Override
 	public void doFilter(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
 			throws IOException, ServletException {
