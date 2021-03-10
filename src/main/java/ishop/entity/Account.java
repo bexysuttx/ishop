@@ -6,11 +6,20 @@ public class Account extends AbstractEntity<Integer> implements CurrentAccount {
 	private static final long serialVersionUID = 8311924013233967672L;
 	private String name;
 	private String email;
+	private String avatarUrl;
 	
 	public Account(String name, String email) {
 		super();
 		this.name = name;
 		this.email = email;
+	}
+
+	public String getAvatarUrl() {
+		return avatarUrl;
+	}
+
+	public void setAvatarUrl(String avatarUrl) {
+		this.avatarUrl = avatarUrl;
 	}
 
 	public String getName() {

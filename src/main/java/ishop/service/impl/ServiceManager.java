@@ -56,12 +56,14 @@ public class ServiceManager {
 	private final ProductService productService;
 	private final OrderService orderService;
 	private final SocialService socialService;
+	final ServletContext applicationContext;
 
 	private ServiceManager(ServletContext context) {
+		this.applicationContext = context;
 		loadApplicationProperties();
 		dataSource = createDataSource();
 		productService = new ProductServiceImpl(dataSource);
-		orderService = new OrderServiceImpl(dataSource);
+		orderService = new OrderServiceImpl(dataSource, this);
 		socialService = new FacebookSocialService(this);
 	}
 

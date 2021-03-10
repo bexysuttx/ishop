@@ -1,13 +1,24 @@
 package ishop.service.impl;
 
+import java.io.IOException;
+import java.io.InputStream;
+
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.sql.Connection;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.UUID;
 
 import org.apache.commons.dbcp2.BasicDataSource;
+import org.apache.commons.mail.DefaultAuthenticator;
+import org.apache.commons.mail.EmailException;
+import org.apache.commons.mail.SimpleEmail;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -42,14 +53,39 @@ class OrderServiceImpl implements OrderService {
 	private final ResultSetHandler<List<OrderItem>> orderItemListResultSetHandler = ResultSetHandlerFactory
 			.getListResultSetHandler(ResultSetHandlerFactory.ORDER_ITEM_RESULT_SET_HANDLER);
 
-	private final ResultSetHandler<List<Order>> ordersResultSetHandler = 
-			ResultSetHandlerFactory.getListResultSetHandler(ResultSetHandlerFactory.ORDER_RESULT_SET_HANDLER);
+	private final ResultSetHandler<List<Order>> ordersResultSetHandler = ResultSetHandlerFactory
+			.getListResultSetHandler(ResultSetHandlerFactory.ORDER_RESULT_SET_HANDLER);
 
 	private final ResultSetHandler<Integer> countResultSetHandler = ResultSetHandlerFactory.getCountResultSetHandler();
-	private BasicDataSource dataSource;
 
-	public OrderServiceImpl(BasicDataSource basicDataSource) {
+	private BasicDataSource dataSource;
+	private final String rootDir;
+	private String smtpServer;
+	private String smtpPort;
+	private String smtpUsername;
+	private String smtpPassword;
+	private String host;
+	private String fromAddress;
+
+	public OrderServiceImpl(BasicDataSource basicDataSource, ServiceManager serviceManager) {
+		super();
 		this.dataSource = basicDataSource;
+		this.rootDir = normalizeMediaDirPath(serviceManager.applicationContext.getRealPath("/")) + "/media/avatar";
+		this.smtpServer = serviceManager.getApplicationProperties("email.smtp.server");
+		this.smtpPort = serviceManager.getApplicationProperties("email.smtp.port");
+		this.smtpUsername = serviceManager.getApplicationProperties("email.smtp.username");
+		this.smtpPassword = serviceManager.getApplicationProperties("email.smtp.password");
+		this.host = serviceManager.getApplicationProperties("app.host");
+		this.fromAddress = serviceManager.getApplicationProperties("email.smtp.fromAddress");
+	}
+
+	private String normalizeMediaDirPath(String realPath) {
+		realPath = realPath.replace("\\", "/");
+		if (realPath.endsWith("/")) {
+			realPath.substring(0, realPath.length() - 1);
+		}
+		return realPath;
+
 	}
 
 	@Override
@@ -108,14 +144,25 @@ class OrderServiceImpl implements OrderService {
 			Account account = JDBCUtils.select(c, "select * from account where email=?", accountResultSetHandler,
 					socialAccount.getEmail());
 			if (account == null) {
-				account = new Account(socialAccount.getName(), socialAccount.getEmail());
-				account = JDBCUtils.insert(c, "insert into account values (nextval('account_seq'),?,?)",
-						accountResultSetHandler, socialAccount.getName(), socialAccount.getEmail());
+				String uid = UUID.randomUUID().toString() + ".jpg";
+				Path filePathToSave = Paths.get(rootDir + "/" + uid);
+				downloadAvatar(socialAccount.getAvatarUrl(), filePathToSave);
+				account = JDBCUtils.insert(c, "insert into account values (nextval('account_seq'),?,?,?)",
+						accountResultSetHandler, socialAccount.getName(), socialAccount.getEmail(),
+						"/media/avatar/" + uid);
 				c.commit();
 			}
 			return account;
 		} catch (SQLException e) {
 			throw new InternalServerErrorException("Can't execute SQL request: " + e.getMessage(), e);
+		} catch (IOException e) {
+			throw new InternalServerErrorException("Can't process avatar link: " + e.getMessage(), e);
+		}
+	}
+
+	protected void downloadAvatar(String avatarUrl, Path filePathToSave) throws IOException {
+		try (InputStream in = new URL(avatarUrl).openStream()) {
+			Files.copy(in, filePathToSave);
 		}
 	}
 
@@ -130,10 +177,29 @@ class OrderServiceImpl implements OrderService {
 			JDBCUtils.insertBatch(c, "insert into order_item values(nextval('order_item_seq'), ?,?,?)",
 					toOrderItemParameterList(order.getId(), shoppingCart.getItems()));
 			c.commit();
+			sendEmail(currentAccount.getEmail(), order);
 			return order.getId();
 		} catch (SQLException e) {
 			throw new InternalServerErrorException("Can't execute SQL request: " + e.getMessage(), e);
 
+		}
+	}
+
+	private void sendEmail(String emailAddress, Order order) {
+		SimpleEmail email = new SimpleEmail();
+		try {
+			email.setCharset("utf-8");
+			email.setHostName(smtpServer);
+			email.setSSLOnConnect(true);
+			email.setSslSmtpPort(smtpPort);
+			email.setAuthenticator(new DefaultAuthenticator(smtpUsername, smtpPassword));
+			email.setSubject("New order");
+			email.setMsg(host + "/order?id=" + order.getId());
+			email.addTo(emailAddress);
+			email.setFrom(fromAddress);
+			email.send();
+		} catch (EmailException e) {
+			LOGGER.error("Error during send email: " + e.getMessage(), e);
 		}
 	}
 
@@ -173,7 +239,7 @@ class OrderServiceImpl implements OrderService {
 		try (Connection c = dataSource.getConnection()) {
 			List<Order> orders = JDBCUtils.select(c,
 					"select * from \"order\" where id_account=? order by id desc limit ? offset ?",
-					ordersResultSetHandler,currentAccount.getId(), limit, offset);
+					ordersResultSetHandler, currentAccount.getId(), limit, offset);
 			return orders;
 		} catch (SQLException e) {
 			throw new InternalServerErrorException("Can't execute SQL request: " + e.getMessage(), e);
